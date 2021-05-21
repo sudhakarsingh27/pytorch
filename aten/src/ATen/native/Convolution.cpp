@@ -439,6 +439,30 @@ bool check_cudnn_depthwise_workload(const at::Tensor& input, int stride) {
   }
   return false;
 }
+
+// simplified version for cudnn 8.2 and above
+bool check_cudnn_depthwise_workload_with_filter(const at::Tensor& input, int stride, int filter) {
+  if (filter != 1 && filter != 3 && filter != 5) return false;
+  if (stride == 1) return true;
+  if (stride != 2) return false;
+
+  int w = input.size(3);  // same as h
+  int ch = input.size(1);
+  int bs = input.size(0);
+
+  // special case since bs1 show good perf in lots of cases
+  if (bs == 1) {
+    if (filter == 1 && w <= 28) return true;
+    if (filter == 3 || filter == 5) return true;
+  } else {
+    if (filter == 1 && bs <= 16 && ch >= 128 && w <= 7) return true;
+    if (filter == 3 || filter == 5) {
+    if ((ch >= 512) || (ch >= 256 && w >= 28)) return true;
+    }
+  }
+  return false;
+}
+
 // Use cudnn for FP16 depthwise convolutions
 auto ConvParams::use_cudnn_depthwise(
         const at::Tensor& input, const at::Tensor& weight) const -> bool {
@@ -457,10 +481,15 @@ auto ConvParams::use_cudnn_depthwise(
                          input.size(2) >= 7 && // min width/height 7
                          !is_dilated() && // no dilation supported
                          stride[0] == stride[1] && // equal strides
-                         ((weight.size(3) == 3) || (weight.size(3) == 1)) &&
                          input.size(1) >= 32); // min 32 channels supported)
     if (kernel_cond) {
-      return check_cudnn_depthwise_workload(input, stride[0]);
+      if (cudnn_version >= 8200) {
+        return check_cudnn_depthwise_workload_with_filter(input, stride[0], weight.size(3));
+      } else if ((weight.size(3) == 3) || (weight.size(3) == 1)) { // keep 7600 logic unchanged
+        return check_cudnn_depthwise_workload(input, stride[0]);
+      } else {
+        return false;
+      }
     } else {
       return false;
     }
