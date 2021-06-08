@@ -471,17 +471,28 @@ auto ConvParams::use_cudnn_depthwise(
   }
   if (detail::getCUDAHooks().supportsDepthwiseConvolutionWithCuDNN()) {
     long cudnn_version = detail::getCUDAHooks().versionCuDNN();
-    bool kernel_cond =  (cudnn_version >= 7600 &&
-                         use_cudnn(input, weight) &&
-                         input.scalar_type() == kHalf && // only for FP16
-                         weight.scalar_type() == kHalf &&
-                         is_depthwise(input, weight) &&
-                         input.ndimension() == 4 &&   // TODO: 5-D contiguous depthwise is not supported yet, need benchmarks
-                         weight.size(2) == weight.size(3) && // only square kernels
-                         input.size(2) >= 7 && // min width/height 7
-                         !is_dilated() && // no dilation supported
-                         stride[0] == stride[1] && // equal strides
-                         input.size(1) >= 32); // min 32 channels supported)
+    
+    bool use_cudnn_cond =  use_cudnn(input, weight);
+    bool is_depthwise_cond = is_depthwise(input, weight);
+
+    bool cond_common = (cudnn_version >= 7600 &&
+                use_cudnn_cond &&
+                input.scalar_type() == kHalf && // only for FP16
+                weight.scalar_type() == kHalf &&
+                is_depthwise_cond &&
+                input.ndimension() == 4 &&
+                input.size(3) >= 7 && // min width/height 7 for conv2d, min width 7 for conv1d
+                !is_dilated() && // no dilation supported
+                input.size(1) >= 32); // min 32 channels supported)
+
+    bool cond_1d = weight.size(2) == 1; // indicates Conv1d
+
+    bool cond_2d = weight.size(2) == weight.size(3) &&
+            ((weight.size(3) == 3) || (weight.size(3) == 1)) &&
+            stride[0] == stride[1];
+
+    bool kernel_cond = cond_common && (cond_1d || cond_2d);
+
     if (kernel_cond) {
       if (cudnn_version >= 8200) {
         return check_cudnn_depthwise_workload_with_filter(input, stride[0], weight.size(3));
