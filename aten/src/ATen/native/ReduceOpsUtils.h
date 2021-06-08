@@ -301,5 +301,72 @@ static void zero_numel_tensor_resize(Tensor& result, Tensor& result_indices,
   at::native::resize_output(result, sizes);
   at::native::resize_output(result_indices, sizes);
 }
+} // native
 
-}}  // at::native
+namespace meta {
+
+static void check_reduction_shape(
+    impl::MetaBase& meta,
+    const char* name,
+    const Tensor& self,
+    c10::optional<IntArrayRef> dim_opt,
+    bool keepdim,
+    ScalarType out_dtype) {
+  const auto& result = meta.maybe_get_output();
+  // check that result type and dtype match if provided
+  if (result.defined()) {
+    TORCH_CHECK(
+        result.scalar_type() == out_dtype,
+        name,
+        ": provided dtype must match dtype of result. Got ",
+        toString(result.scalar_type()),
+        " and ",
+        toString(out_dtype),
+        ".");
+  }
+  // dim={} performs an all-reduce, same as dim=None
+  IntArrayRef dim = dim_opt.value_or(IntArrayRef{});
+  int64_t ndim = self.dim();
+  auto mask = at::native::make_dim_mask(dim, ndim);
+  auto shape = at::native::shape_from_dim_mask(self, mask, keepdim);
+  meta.set_output(shape, self.options().dtype(out_dtype));
+  namedinference::propagate_names_for_reduction(result, self, dim, keepdim);
+}
+
+static TensorIterator make_reduction(
+    const Tensor& self,
+    const Tensor& result,
+    c10::optional<IntArrayRef> dim_opt,
+    bool keepdim,
+    ScalarType in_dtype) {
+  IntArrayRef dim = dim_opt.value_or(IntArrayRef{});
+  int64_t ndim = self.dim();
+  auto mask = at::native::make_dim_mask(dim, ndim);
+  auto viewed_result =
+      at::native::review_reduce_result(result, ndim, mask, keepdim);
+  if (self.scalar_type() == in_dtype) {
+    return TensorIterator::reduce_op(viewed_result, self);
+  }
+  return TensorIterator::reduce_op(viewed_result, self.to(in_dtype));
+}
+
+static TensorIterator make_reduction_from_out_ty(
+    const Tensor& self,
+    const Tensor& result,
+    c10::optional<IntArrayRef> dim,
+    bool keepdim,
+    ScalarType out_dtype) {
+  // special case for type promotion in mixed precision, improves computational
+  // efficiency.
+  // not generalize this to common mismatched input/output types to avoid cross
+  // product of templated kernel launches.
+  const bool gpu_lowp_to_f32 =
+      (self.is_cuda() &&
+       (self.scalar_type() == kHalf || self.scalar_type() == kBFloat16) &&
+       out_dtype == kFloat);
+  auto in_dtype = gpu_lowp_to_f32 ? self.scalar_type() : out_dtype;
+  return make_reduction(self, result, dim, keepdim, in_dtype);
+}
+
+} // namespace meta
+} // namespace at
