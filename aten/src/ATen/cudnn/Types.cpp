@@ -11,6 +11,8 @@ cudnnDataType_t getCudnnDataTypeFromScalarType(const at::ScalarType dtype) {
     return CUDNN_DATA_DOUBLE;
   } else if (dtype == at::kHalf) {
     return CUDNN_DATA_HALF;
+  } else if (dtype == at::kBFloat16) {
+    return CUDNN_DATA_BFLOAT16;
   }
   std::string msg("getCudnnDataTypeFromScalarType() not supported for ");
   msg += toString(dtype);
