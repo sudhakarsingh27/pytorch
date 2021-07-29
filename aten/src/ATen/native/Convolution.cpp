@@ -18,9 +18,11 @@
 #include <nnpack.h>
 #endif
 
+#ifdef USE_CUDA
 #include <ATen/cuda/CUDAConfig.h>  // for the definition of AT_CUDNN_ENABLED
 #if AT_CUDNN_ENABLED()
 #include <ATen/native/cudnn/Macros.h>
+#endif
 #endif
 
 constexpr int MIOPEN_DIM_MAX = 5;
@@ -211,6 +213,7 @@ auto ConvParams::use_cudnn(const at::Tensor& input, const at::Tensor& weight) co
   if (!input.is_cuda() || !cudnn_enabled) {
     return false;
   }
+#ifdef USE_CUDA
 #if AT_CUDNN_ENABLED()
 #if !HAS_CUDNN_V8()
   if (input.scalar_type() == at::kBFloat16 || weight.scalar_type() == at::kBFloat16) {
@@ -218,6 +221,7 @@ auto ConvParams::use_cudnn(const at::Tensor& input, const at::Tensor& weight) co
   }
 #endif // !HAS_CUDNN_V8()
 #endif // AT_CUDNN_ENABLED()
+#endif
   if (!cudnn_conv_use_channels_last(input, weight)) { // bypass dilation checks for channels-last convolution
     if (deterministic && is_dilated()) {
       // cudnn doesn't support deterministic dilated convolution fully yet
