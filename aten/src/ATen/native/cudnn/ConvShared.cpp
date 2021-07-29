@@ -520,6 +520,7 @@ Tensor cudnn_convolution_relu(
     return output_t;
   }
 
+  bool benchmark = at::globalContext().benchmarkCuDNN();
   raw_cudnn_convolution_add_relu_out(
       output_t,
       input_t,
@@ -538,7 +539,7 @@ Tensor cudnn_convolution_relu(
       padding,
       dilation,
       groups,
-      false, // benchmark
+      benchmark, // benchmark
       false, // deterministic
       input_t.dim() == 4 // enable allow_tf32 for conv2d
   );
@@ -569,6 +570,7 @@ Tensor cudnn_convolution_add_relu(
     return output_t;
   }
 
+  bool benchmark = at::globalContext().benchmarkCuDNN();
   raw_cudnn_convolution_add_relu_out(
       output_t,
       input_t,
@@ -587,7 +589,7 @@ Tensor cudnn_convolution_add_relu(
       padding,
       dilation,
       groups,
-      false, // benchmark
+      benchmark,
       false, // deterministic
       input_t.dim() == 4 // enable allow_tf32 for conv2d
   );
