@@ -215,7 +215,7 @@ auto ConvParams::use_cudnn(const at::Tensor& input, const at::Tensor& weight) co
   }
 #ifdef USE_CUDA
 #if AT_CUDNN_ENABLED()
-#if !HAS_CUDNN_V8()
+#if HAS_CUDNN_V8()
   if (input.scalar_type() == at::kBFloat16 || weight.scalar_type() == at::kBFloat16) {
     return false;
   }
