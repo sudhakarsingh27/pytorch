@@ -290,6 +290,7 @@ const auto get_generator_sources(/*const cudnnBackendDescriptorType_t& desc,*/ c
                             .setOperationGraph(opGraph)
                             .setHeurMode(heur_mode)
                             .build();
+      TORCH_WARN("heuristics engineconfig count: ", heuristics.getEngineConfigCount());
       auto &engine_configs = heuristics.getEngineConfig(heuristics.getEngineConfigCount());
       cudnn_frontend::EngineConfigList filtered_configs;
       filterEngineConfigs(engine_configs, filtered_configs, deterministic, allow_tf32, x.scalar_type());
@@ -299,10 +300,12 @@ const auto get_generator_sources(/*const cudnnBackendDescriptorType_t& desc,*/ c
   auto fallback_method = [/*&desc,*/ &x, deterministic, allow_tf32](cudnn_frontend::OperationGraph &opGraph) -> cudnn_frontend::EngineConfigList {
     auto fallback = cudnn_frontend::EngineFallbackListBuilder()
                         .setOperationGraph(opGraph)
+			//.setHeurMode(CUDNN_HEUR_MODE_FALLBACK)
                         //.setOperation(desc)
                         //.setOperation(CUDNN_BACKEND_OPERATION_CONVOLUTION_FORWARD_DESCRIPTOR)
                         .build();
     auto &fallback_list = fallback.getFallbackList();
+    TORCH_WARN("fallback list size: ", fallback_list.size());
     cudnn_frontend::EngineConfigList filtered_configs;
     filterEngineConfigs(fallback_list, filtered_configs, deterministic, allow_tf32, x.scalar_type());
     return filtered_configs;
@@ -421,6 +424,7 @@ auto get_configs_from_heuristics(const cudnnHandle_t handle, const cudnnBackendD
 
   cudnn_frontend::EngineConfigGenerator generator(sources.size(), sources.data());
   auto configs = generator.generate_engine_config(opGraph);
+  if (debug) { TORCH_WARN("config count from get: ", configs.size()); }
   return configs;
 }
 
