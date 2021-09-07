@@ -34,6 +34,7 @@
 #include <sstream>
 #include <queue>
 #include <TH/TH.h>
+#include <nvToolsExt.h> 
 
 namespace torch { namespace autograd {
 
@@ -414,7 +415,9 @@ auto Engine::thread_main(const std::shared_ptr<GraphTask>& graph_task) -> void {
           // callbacks.
           GraphTaskGuard guard(local_graph_task);
           NodeGuard ndguard(task.fn_);
+          nvtxRangePush(task.fn_.get()->name().c_str());
           evaluate_function(local_graph_task, task.fn_.get(), task.inputs_, local_graph_task->cpu_ready_queue_);
+          nvtxRangePop();
         } catch (std::exception& e) {
           thread_on_exception(local_graph_task, task.fn_, e);
         }
