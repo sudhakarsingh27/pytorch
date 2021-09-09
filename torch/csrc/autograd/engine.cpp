@@ -429,11 +429,11 @@ auto Engine::thread_main(const std::shared_ptr<GraphTask>& graph_task) -> void {
 
     // Check if we've completed execution.
     if (local_graph_task->completed()) {
-      string post_processing_str("post_proc_str");
+      std::string post_processing_str("post_proc_str");
       nvtxRangePush(post_processing_str.c_str());
       local_graph_task->mark_as_completed_and_run_post_processing();
       nvtxRangePop();
-      
+
       auto base_owner = local_graph_task->owner_;
       // The current worker thread finish the graph_task, but the owning thread
       // of the graph_task might be sleeping on pop() if it does not have work.
