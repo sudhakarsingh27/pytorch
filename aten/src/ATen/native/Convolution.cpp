@@ -441,7 +441,18 @@ bool check_cudnn_depthwise_workload(const at::Tensor& input, int stride) {
 }
 
 // simplified version for cudnn 8.2 and above
-bool check_cudnn_depthwise_workload_with_filter(const at::Tensor& input, int stride, int filter) {
+bool check_cudnn_depthwise_workload_with_filter(const at::Tensor& input, int stride, const at::Tensor& weight) {
+  // 1D conv
+  if(input.size(2) == 1 && stride == 1){
+    // For now, all conv1d ops with stride 1 are expected to be performant
+    return true;
+  }
+
+  // 2d conv
+  // only square filters
+  if (weight.size(2) != weight.size(3)) return false;
+  int filter = weight.size(3);
+  // only 1/3/5 filter
   if (filter != 1 && filter != 3 && filter != 5) return false;
   if (stride == 1) return true;
   if (stride != 2) return false;
