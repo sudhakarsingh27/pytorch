@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <torch/csrc/deploy/deploy.h>
+#include <torch/cuda.h>
 #include <torch/script.h>
 #include <torch/torch.h>
 #include <future>
@@ -21,6 +22,9 @@ const char* path(const char* envname, const char* path) {
 }
 
 TEST(TorchDeployGPUTest, SimpleModel) {
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP();
+  }
   const char* model_filename = path("SIMPLE", simple);
   const char* jit_filename = path("SIMPLE_JIT", simple_jit);
 
@@ -48,4 +52,35 @@ TEST(TorchDeployGPUTest, SimpleModel) {
   at::Tensor ref_output = ref_model.forward(inputs).toTensor();
 
   ASSERT_TRUE(ref_output.allclose(output, 1e-03, 1e-05));
+}
+
+TEST(TorchDeployGPUTest, UsesDistributed) {
+  const auto model_filename = path(
+      "USES_DISTRIBUTED",
+      "torch/csrc/deploy/example/generated/uses_distributed");
+  torch::deploy::InterpreterManager m(1);
+  torch::deploy::Package p = m.load_package(model_filename);
+  {
+    auto I = p.acquire_session();
+    I.self.attr("import_module")({"uses_distributed"});
+  }
+}
+
+TEST(TorchDeployGPUTest, TensorRT) {
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP();
+  }
+  auto packagePath = path(
+      "MAKE_TRT_MODULE", "torch/csrc/deploy/example/generated/make_trt_module");
+  torch::deploy::InterpreterManager m(1);
+  torch::deploy::Package p = m.load_package(packagePath);
+  auto makeModel = p.load_pickle("make_trt_module", "model.pkl");
+  {
+    auto I = makeModel.acquire_session();
+    auto model = I.self(at::ArrayRef<at::IValue>{});
+    auto input = at::ones({1, 2, 3}).cuda();
+    auto output = input * 2;
+    ASSERT_TRUE(
+        output.allclose(model(at::IValue{input}).toIValue().toTensor()));
+  }
 }

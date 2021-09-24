@@ -107,18 +107,18 @@ struct TORCH_API RpcRetryOptions {
 struct TORCH_API RpcRetryInfo {
   RpcRetryInfo(
       const WorkerInfo& to,
-      Message&& message,
+      c10::intrusive_ptr<Message> message,
       c10::intrusive_ptr<JitFuture> originalFuture,
       int retryCount,
       RpcRetryOptions options)
       : to_(to),
-        message_(message),
+        message_(std::move(message)),
         originalFuture_(std::move(originalFuture)),
         retryCount_(retryCount),
         options_(options) {}
 
   const WorkerInfo& to_;
-  Message message_;
+  c10::intrusive_ptr<Message> message_;
   // Future that is returned to the caller of sendWithRetries().
   c10::intrusive_ptr<JitFuture> originalFuture_;
   // Number of send attempts completed so far.
@@ -162,9 +162,9 @@ class TORCH_API RpcAgent {
   // should be ignored by the caller.
   virtual c10::intrusive_ptr<JitFuture> send(
       const WorkerInfo& to,
-      Message&& message,
+      c10::intrusive_ptr<Message> message,
       const float rpcTimeoutSeconds = kUnsetRpcTimeout,
-      const std::unordered_map<c10::Device, c10::Device>& deviceMap = {}) = 0;
+      const DeviceMap& deviceMap = {}) = 0;
 
   // Retries sending the message up to maxRetries times until an ACK is
   // receieved. The duration between consecutive sends is increased over
@@ -180,7 +180,7 @@ class TORCH_API RpcAgent {
   // are idempotent.
   c10::intrusive_ptr<JitFuture> sendWithRetries(
       const WorkerInfo& to,
-      Message&& message,
+      c10::intrusive_ptr<Message> message,
       RpcRetryOptions retryOptions = RpcRetryOptions());
 
   // Return a reference to the ``WorkerInfo`` of this RpcAgent.

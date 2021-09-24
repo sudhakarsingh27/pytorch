@@ -3,6 +3,7 @@
 #include <ATen/core/functional.h>
 #include <ATen/core/ivalue_inl.h>
 #include <c10/util/Exception.h>
+#include <c10/util/irange.h>
 #include <torch/csrc/jit/serialization/import_export_helpers.h>
 #if !defined(C10_MOBILE) && !defined(C10_DISABLE_LEGACY_IMPORT)
 #include <torch/csrc/jit/serialization/import_legacy.h>
@@ -39,14 +40,15 @@ using caffe2::serialize::ReadAdapterInterface;
 void postSetStateValidate(const IValue& v) {
   auto obj = v.toObject();
   const auto& objType = obj->type();
-  for (size_t i = 0; i < objType->numAttributes(); i++) {
+  for (const auto i : c10::irange(objType->numAttributes())) {
     const auto& attrType = objType->getAttribute(i);
     const auto& attrName = objType->getAttributeName(i);
     const auto& slot = obj->getSlot(i);
     // const auto attrType = objType->getAttribute(i);
     // Verify that all the non-optional attributes have been initialized
     // TODO: Issue #20497
-    if (attrType->kind() != TypeKind::OptionalType &&
+    if (attrType->kind() != TypeKind::UnionType &&
+        attrType->kind() != TypeKind::OptionalType &&
         attrType->kind() != TypeKind::NoneType) {
       TORCH_CHECK(
           !slot.isNone(),
@@ -90,7 +92,7 @@ class ScriptModuleDeserializer final {
       std::shared_ptr<PyTorchStreamReader> reader,
       std::string pickle_dir_prefix,
       std::string tensor_dir_prefix,
-      std::shared_ptr<StorageContext> storage_context)
+      std::shared_ptr<DeserializationStorageContext> storage_context)
       : compilation_unit_(std::move(cu)),
         reader_(std::move(reader)),
         storage_context_(std::move(storage_context)),
@@ -115,7 +117,7 @@ class ScriptModuleDeserializer final {
 
   std::shared_ptr<CompilationUnit> compilation_unit_;
   std::shared_ptr<PyTorchStreamReader> reader_;
-  std::shared_ptr<StorageContext> storage_context_;
+  std::shared_ptr<DeserializationStorageContext> storage_context_;
   c10::optional<at::Device> device_;
   std::vector<at::IValue> constants_table_;
   std::string code_prefix_;
@@ -158,7 +160,7 @@ IValue ScriptModuleDeserializer::readArchive(const std::string& archive_name) {
     } else {
       auto dict = std::move(input).toGenericDict();
       auto obj = c10::ivalue::Object::create(type, n);
-      for (size_t i = 0; i < n; ++i) {
+      for (const auto i : c10::irange(n)) {
         obj->setSlot(i, dict.at(cls->getAttributeName(i)));
       }
       return obj;
@@ -290,7 +292,7 @@ Module import_ir_module(
 Module import_ir_module(
     std::shared_ptr<CompilationUnit> cu,
     std::shared_ptr<PyTorchStreamReader> reader,
-    std::shared_ptr<StorageContext> storage_context,
+    std::shared_ptr<DeserializationStorageContext> storage_context,
     c10::optional<at::Device> device,
     std::string ts_id) {
   ScriptModuleDeserializer deserializer(

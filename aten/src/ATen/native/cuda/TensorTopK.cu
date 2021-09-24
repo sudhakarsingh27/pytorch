@@ -1,7 +1,6 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/detail/TensorInfo.cuh>
 #include <ATen/cuda/detail/OffsetCalculator.cuh>
-#include <ATen/LegacyTHFunctionsCUDA.h>
 #include <ATen/native/Resize.h>
 #include <ATen/native/cuda/SortingCommon.cuh>
 #include <ATen/native/cuda/SortingRadixSelect.cuh>
@@ -54,7 +53,7 @@ __global__ void gatherTopK(at::cuda::detail::TensorInfo<T, IndexType> input,
   int64_t* indicesSliceStart = &indices.data[indicesSliceStartIndex];
 
   // Find the k-th highest element in our input
-  T topKValue = ScalarConvert<int, T>::to(0);
+  T topKValue = static_cast<T>(0);
   radixSelect<T, typename TopKTypeConfig<T>::RadixType, IndexType, Order>(
     inputSliceStart, outputSliceSize,
     inputSliceSize, inputWithinSliceStride,
@@ -81,7 +80,7 @@ __global__ void gatherTopK(at::cuda::detail::TensorInfo<T, IndexType> input,
   for (IndexType i = threadIdx.x; i < numIterations; i += blockDim.x) {
     bool inRange = (i < inputSliceSize);
     T v =
-      inRange ? doLdg(&inputSliceStart[i * inputWithinSliceStride]) : ScalarConvert<int, T>::to(0);
+      inRange ? doLdg(&inputSliceStart[i * inputWithinSliceStride]) : static_cast<T>(0);
     const auto convertedV = at::native::TopKTypeConfig<T>::convert(v);
     bool hasTopK;
     if (Order) {
@@ -119,7 +118,7 @@ __global__ void gatherTopK(at::cuda::detail::TensorInfo<T, IndexType> input,
   for (IndexType i = threadIdx.x; i < numIterations; i += blockDim.x) {
     bool inRange = (i < inputSliceSize);
     T v =
-      inRange ? doLdg(&inputSliceStart[i * inputWithinSliceStride]) : ScalarConvert<int, T>::to(0);
+      inRange ? doLdg(&inputSliceStart[i * inputWithinSliceStride]) : static_cast<T>(0);
     const auto convertedV = at::native::TopKTypeConfig<T>::convert(v);
     bool hasTopK = inRange && (convertedV == topKConverted);
 
@@ -233,10 +232,16 @@ TORCH_IMPL_FUNC(topk_out_cuda)
     inputInfo.sizes[dim] = 1;                                             \
     topKInfo.sizes[dim] = 1;                                              \
     indicesInfo.sizes[dim] = 1;                                           \
+    /* stash the stride of dim because it can be accidentally collapsed */ \
+    auto strideTopK = topKInfo.strides[dim];                              \
+    auto strideIndices = indicesInfo.strides[dim];                        \
     /* Collapse all other dims */                                         \
     int collapseInputDim = inputInfo.collapseDims(dim);                   \
     int collapseTopKDim = topKInfo.collapseDims(dim);                     \
     int collapseIndicesDim = indicesInfo.collapseDims(dim);               \
+    /* restore stride in case it was collapsed */                         \
+    topKInfo.strides[collapseTopKDim] = strideTopK;                       \
+    indicesInfo.strides[collapseIndicesDim] = strideIndices;              \
     int64_t inputSlices = 1;                                              \
     for (int i = 0; i < inputInfo.dims; ++i) {                            \
       inputSlices *= inputInfo.sizes[i];                                  \

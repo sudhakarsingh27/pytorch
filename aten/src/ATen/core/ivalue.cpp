@@ -8,6 +8,7 @@
 #include <c10/util/StringUtil.h>
 #include <c10/util/hash.h>
 #include <cmath>
+#include <iostream>
 
 namespace c10 {
 bool _fastEqualsForContainer(const IValue& lhs, const IValue& rhs) {
@@ -288,11 +289,12 @@ IValue IValue::equals(const IValue& rhs) const {
       // In Python you're not supposed to do this comparison apparently. Not
       // sure if we should warn here or what
       return rhs.isNone();
-    case Tag::Tensor:
+    case Tag::Tensor: {
       if (!rhs.isTensor()) {
         return false;
       }
       return lhs.toTensor().eq(rhs.toTensor());
+    }
     case Tag::Storage:
       return rhs.isStorage() && lhs.toStorage().unsafeGetStorageImpl() == rhs.toStorage().unsafeGetStorageImpl();
     case Tag::Double:
@@ -888,8 +890,18 @@ void ivalue::Object::resizeObject(size_t slot) {
   slots_.resize(type()->numAttributes());
 }
 
+
 c10::intrusive_ptr<ivalue::Object> ivalue::Object::copy() const {
-  auto object = ivalue::Object::create(c10::StrongTypePtr(type_.cu_, type()), type()->numAttributes());
+  auto object = ivalue::Object::create(type_, type()->numAttributes());
+  for (const auto i : c10::irange(slots_.size())) {
+    object->setSlot(i, slots_[i]);
+  }
+  return object;
+}
+
+c10::intrusive_ptr<ivalue::Object> ivalue::Object::copy_to_weak_compilation_ref() const {
+  auto object = ivalue::Object::create(
+      WeakOrStrongTypePtr(type_.asWeakTypePtr()), type()->numAttributes());
   for (const auto i : c10::irange(slots_.size())) {
     object->setSlot(i, slots_[i]);
   }
@@ -902,7 +914,8 @@ c10::intrusive_ptr<ivalue::Object> ivalue::Object::deepcopy() const {
 }
 
 c10::intrusive_ptr<ivalue::Object> ivalue::Object::deepcopy(IValue::HashAliasedIValueMap& memo) const {
-  auto object = ivalue::Object::create(c10::StrongTypePtr(type_.cu_, type()), type()->numAttributes());
+  auto cu = type_.cu_;
+  auto object = ivalue::Object::create(WeakOrStrongTypePtr(type_.cu_, type_.type_), type()->numAttributes());
   for (const auto i : c10::irange(slots_.size())) {
     if (slots_[i].type() == c10::CapsuleType::get()) {
       // If we've gotten here, it means that we have *not* copied this
@@ -931,6 +944,24 @@ StrongTypePtr::StrongTypePtr(
   TORCH_INTERNAL_ASSERT(type_);
 }
 
+WeakTypePtr::WeakTypePtr(
+    std::weak_ptr<torch::jit::CompilationUnit> cu,
+    TypePtr type) {
+  cu_ = std::move(cu);
+  type_ = type;
+}
+
+WeakTypePtr WeakOrStrongTypePtr::asWeakTypePtr() const {
+  if (!holds_strong_ref()) {
+    return WeakTypePtr(cu_.getWeakRefOrThrow(), type_);
+  } else {
+    std::weak_ptr<torch::jit::CompilationUnit> weak_cu =
+        cu_.getStrongRefOrThrow();
+    return WeakTypePtr(weak_cu, type_);
+  }
+}
+
+
 ska::flat_hash_map<std::type_index, c10::ClassTypePtr>& getCustomClassTypeMap() {
     static ska::flat_hash_map<std::type_index, c10::ClassTypePtr> tmap;
     return tmap;
@@ -944,18 +975,38 @@ getClassConverter() {
 }
 
 // Needs to be in this .cpp file to access the full definition of PyObjectHolder
-std::vector<std::reference_wrapper<const at::DataPtr>> ivalue::Future::extractDataPtrs(
+std::vector<c10::weak_intrusive_ptr<c10::StorageImpl>> ivalue::Future::extractStorages(
     const at::IValue& value) {
-  std::vector<std::reference_wrapper<const at::DataPtr>> data_ptrs;
+  std::vector<c10::weak_intrusive_ptr<c10::StorageImpl>> weakStorageImpls;
   // getSubValues works poorly on Python objects: it only works if they can be
   // converted to a "regular" IValue type hence, for example, it doesn't support
   // custom subclasses. Thus, instead, we extract the tensors through pickling.
   if (value.isPyObject()) {
     std::vector<at::Tensor> tensors =
         value.toPyObjectHolder()->extractTensors();
-    data_ptrs.reserve(tensors.size());
+    size_t num_storages = 0;
     for (const at::Tensor& tensor : tensors) {
-      data_ptrs.emplace_back(tensor.storage().data_ptr());
+      if (tensor.is_sparse()) {
+        // Sparse tensor is indices and values. Both are tensors
+        // and contain storage. Therefore num_storages needs to be
+        // incremented by 2.
+        num_storages += 2;
+      } else {
+        // A dense/strided tensor contains 1 storage.
+        num_storages += 1;
+      }
+    }
+    weakStorageImpls.reserve(num_storages);
+    for (const at::Tensor& tensor : tensors) {
+      if (tensor.is_sparse()) {
+        // Sparse tensor is indices and values. Both are tensors
+        // and contain storage.
+        weakStorageImpls.push_back(tensor.indices().storage().getWeakStorageImpl());
+        weakStorageImpls.push_back(tensor.values().storage().getWeakStorageImpl());
+      } else {
+        // A dense/strided tensor contains 1 storage
+        weakStorageImpls.push_back(tensor.storage().getWeakStorageImpl());
+      }
     }
   } else {
     at::IValue::HashAliasedIValues sub_values;
@@ -964,11 +1015,11 @@ std::vector<std::reference_wrapper<const at::DataPtr>> ivalue::Future::extractDa
     value.getSubValues(sub_values);
     for (const at::IValue& sub_value : sub_values) {
       if (sub_value.isTensor()) {
-        data_ptrs.emplace_back(sub_value.toTensor().storage().data_ptr());
+        weakStorageImpls.push_back(sub_value.toTensor().storage().getWeakStorageImpl());
       }
     }
   }
-  return data_ptrs;
+  return weakStorageImpls;
 }
 
 TORCH_API intrusive_ptr<ivalue::Future> collectAll(
@@ -1070,7 +1121,7 @@ TORCH_API intrusive_ptr<ivalue::Future> collectAny(
       if (src.hasError()) {
         dst->setError(src.exception_ptr());
       } else {
-        dst->markCompleted(src.constValue(), src.dataPtrs());
+        dst->markCompleted(src.constValue(), src.storages());
       }
     }
   };

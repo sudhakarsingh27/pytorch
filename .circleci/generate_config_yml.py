@@ -13,17 +13,14 @@ from collections import namedtuple
 import cimodel.data.binary_build_definitions as binary_build_definitions
 import cimodel.data.pytorch_build_definitions as pytorch_build_definitions
 import cimodel.data.simple.android_definitions
-import cimodel.data.simple.bazel_definitions
 import cimodel.data.simple.binary_smoketest
 import cimodel.data.simple.docker_definitions
-import cimodel.data.simple.ge_config_tests
 import cimodel.data.simple.ios_definitions
 import cimodel.data.simple.macos_definitions
 import cimodel.data.simple.mobile_definitions
 import cimodel.data.simple.nightly_android
 import cimodel.data.simple.nightly_ios
 import cimodel.data.simple.anaconda_prune_defintions
-import cimodel.data.windows_build_definitions as windows_build_definitions
 import cimodel.lib.miniutils as miniutils
 import cimodel.lib.miniyaml as miniyaml
 
@@ -135,24 +132,27 @@ def gen_build_workflows_tree():
         cimodel.data.simple.android_definitions.get_workflow_jobs,
         cimodel.data.simple.ios_definitions.get_workflow_jobs,
         cimodel.data.simple.mobile_definitions.get_workflow_jobs,
-        cimodel.data.simple.ge_config_tests.get_workflow_jobs,
-        cimodel.data.simple.bazel_definitions.get_workflow_jobs,
         cimodel.data.simple.binary_smoketest.get_workflow_jobs,
         cimodel.data.simple.nightly_ios.get_workflow_jobs,
         cimodel.data.simple.nightly_android.get_workflow_jobs,
         cimodel.data.simple.anaconda_prune_defintions.get_workflow_jobs,
-        windows_build_definitions.get_windows_workflows,
         binary_build_definitions.get_post_upload_jobs,
         binary_build_definitions.get_binary_smoke_test_jobs,
     ]
+    build_jobs = [f() for f in build_workflows_functions]
+    master_build_jobs = filter_master_only_jobs(build_jobs)
 
     binary_build_functions = [
         binary_build_definitions.get_binary_build_jobs,
         binary_build_definitions.get_nightly_tests,
         binary_build_definitions.get_nightly_uploads,
     ]
-    build_jobs = [f() for f in build_workflows_functions]
-    master_build_jobs = filter_master_only_jobs(build_jobs)
+
+    slow_gradcheck_jobs = [
+        pytorch_build_definitions.get_workflow_jobs,
+        cimodel.data.simple.docker_definitions.get_workflow_jobs,
+    ]
+
     return {
         "workflows": {
             "binary_builds": {
@@ -166,6 +166,10 @@ def gen_build_workflows_tree():
             "master_build": {
                 "when": r"<< pipeline.parameters.run_master_build >>",
                 "jobs": master_build_jobs,
+            },
+            "slow_gradcheck_build": {
+                "when": r"<< pipeline.parameters.run_slow_gradcheck_build >>",
+                "jobs": [f(only_slow_gradcheck=True) for f in slow_gradcheck_jobs],
             },
         }
     }

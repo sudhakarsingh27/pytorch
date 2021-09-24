@@ -20,9 +20,7 @@ if NOT "%BUILD_ENVIRONMENT%"=="" (
 )
 call %CONDA_PARENT_DIR%\Miniconda3\Scripts\activate.bat %CONDA_PARENT_DIR%\Miniconda3
 if NOT "%BUILD_ENVIRONMENT%"=="" (
-    :: We have to pin Python version to 3.6.7, until mkl supports Python 3.7
-    :: Numba is pinned to 0.44.0 to avoid https://github.com/numba/numba/issues/4352
-    call conda install -y -q python=3.6.7 numpy mkl cffi pyyaml boto3 protobuf numba==0.44.0 scipy==1.5.0 typing_extensions dataclasses libuv
+    call conda install -y -q python=3.8 numpy mkl cffi pyyaml boto3 protobuf numba scipy=1.6.2 typing_extensions dataclasses libuv
     if %errorlevel% neq 0 ( exit /b %errorlevel% )
     call conda install -y -q -c conda-forge cmake
     if %errorlevel% neq 0 ( exit /b %errorlevel% )
@@ -39,15 +37,7 @@ if %errorlevel% neq 0 ( exit /b %errorlevel% )
 popd
 
 :: The version is fixed to avoid flakiness: https://github.com/pytorch/pytorch/issues/31136
-pip install "ninja==1.10.0.post1" future "hypothesis==4.53.2" "librosa>=0.6.2" psutil pillow unittest-xml-reporting pytest
-
-:: Only the CPU tests run coverage, which I know is not super clear: https://github.com/pytorch/pytorch/issues/56264
-if "%BUILD_ENVIRONMENT%" == "pytorch-win-vs2019-cpu-py3" (
-    :: coverage config file needed for plug-ins and settings to work
-    set PYTORCH_COLLECT_COVERAGE=1
-    python -mpip install coverage==5.5
-    python -mpip install -e tools/coverage_plugins_package
-)
+pip install "ninja==1.10.0.post1" future "hypothesis==4.53.2" "expecttest==0.1.3" "librosa>=0.6.2" psutil pillow unittest-xml-reporting pytest
 if %errorlevel% neq 0 ( exit /b %errorlevel% )
 
 set DISTUTILS_USE_SDK=1
@@ -64,7 +54,7 @@ set CUDNN_LIB_DIR=%CUDA_PATH%\lib\x64
 set CUDA_TOOLKIT_ROOT_DIR=%CUDA_PATH%
 set CUDNN_ROOT_DIR=%CUDA_PATH%
 set NVTOOLSEXT_PATH=C:\Program Files\NVIDIA Corporation\NvToolsExt
-set PATH=%CUDA_PATH%\bin;%CUDA_PATH%\libnvvp;%PATH%
+set PATH=%CUDA_PATH%\bin;%CUDA_PATH%\libnvvp;%CUDA_PATH%\extras\CUPTI\lib64;%PATH%
 set NUMBAPRO_CUDALIB=%CUDA_PATH%\bin
 set NUMBAPRO_LIBDEVICE=%CUDA_PATH%\nvvm\libdevice
 set NUMBAPRO_NVVM=%CUDA_PATH%\nvvm\bin\nvvm64_32_0.dll

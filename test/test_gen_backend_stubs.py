@@ -138,11 +138,11 @@ supported:
         self.assertExpectedInline(output_error, '''Found an invalid operator name: abs_BAD''')
 
     # The backend is valid, but doesn't have a valid autograd key. They can't override autograd kernels in that case.
-    # Only using MSNPU here because it has a valid backend key but not an autograd key- if this changes we can update the test.
+    # Only using Vulkan here because it has a valid backend key but not an autograd key- if this changes we can update the test.
     def test_backend_has_no_autograd_key_but_provides_entries(self):
         yaml_str = '''\
-backend: MSNPU
-cpp_namespace: torch_msnpu
+backend: Vulkan
+cpp_namespace: torch_vulkan
 supported:
 - add
 autograd:
@@ -155,26 +155,26 @@ autograd:
     def test_backend_autograd_kernel_mismatch_out_functional(self):
         yaml_str = '''\
 backend: XLA
-cpp_namespace: torch_msnpu
+cpp_namespace: torch_xla
 supported:
 - add.Tensor
 autograd:
 - add.out'''
         output_error = self.get_errors_from_gen_backend_stubs(yaml_str)
-        self.assertExpectedInline(output_error, '''Currently, all variants of an op must either be registered to a backend key, or to a backend's autograd key. They can not be mix and matched. If this is something you need, feel free to create an issue! add is listed under "supported", but add_out is listed under "autograd".''')  # noqa: B950
+        self.assertExpectedInline(output_error, '''Currently, all variants of an op must either be registered to a backend key, or to a backend's autograd key. They cannot be mix and matched. If this is something you need, feel free to create an issue! add is listed under "supported", but add_out is listed under "autograd".''')  # noqa: B950
 
     # in an operator group, currently all operators must either be registered to the backend or autograd kernel.
     # Here, functional and inplace mismatch
     def test_backend_autograd_kernel_mismatch_functional_inplace(self):
         yaml_str = '''\
 backend: XLA
-cpp_namespace: torch_msnpu
+cpp_namespace: torch_xla
 supported:
 - add.Tensor
 autograd:
 - add_.Tensor'''
         output_error = self.get_errors_from_gen_backend_stubs(yaml_str)
-        self.assertExpectedInline(output_error, '''Currently, all variants of an op must either be registered to a backend key, or to a backend's autograd key. They can not be mix and matched. If this is something you need, feel free to create an issue! add is listed under "supported", but add_ is listed under "autograd".''')  # noqa: B950
+        self.assertExpectedInline(output_error, '''Currently, all variants of an op must either be registered to a backend key, or to a backend's autograd key. They cannot be mix and matched. If this is something you need, feel free to create an issue! add is listed under "supported", but add_ is listed under "autograd".''')  # noqa: B950
 
     # Currently, the same operator can't be listed under both 'supported' and 'autograd', which would
     # involve registering the same kernel to both the XLA and AutogradXLA keys.
@@ -182,13 +182,13 @@ autograd:
     def test_op_appears_in_supported_and_autograd_lists(self):
         yaml_str = '''\
 backend: XLA
-cpp_namespace: torch_msnpu
+cpp_namespace: torch_xla
 supported:
 - add.Tensor
 autograd:
 - add.Tensor'''
         output_error = self.get_errors_from_gen_backend_stubs(yaml_str)
-        self.assertExpectedInline(output_error, '''Currently, all variants of an op must either be registered to a backend key, or to a backend's autograd key. They can not be mix and matched. If this is something you need, feel free to create an issue! add is listed under "supported", but add is listed under "autograd".''')  # noqa: B950
+        self.assertExpectedInline(output_error, '''Currently, all variants of an op must either be registered to a backend key, or to a backend's autograd key. They cannot be mix and matched. If this is something you need, feel free to create an issue! add is listed under "supported", but add is listed under "autograd".''')  # noqa: B950
 
     # unrecognized extra yaml key
     def test_unrecognized_key(self):
@@ -199,7 +199,7 @@ supported:
 - abs
 invalid_key: invalid_val'''
         output_error = self.get_errors_from_gen_backend_stubs(yaml_str)
-        self.assertExpectedInline(output_error, ''' contains unexpected keys: invalid_key. Only the following keys are supported: backend, cpp_namespace, supported, autograd''')  # noqa: B950
+        self.assertExpectedInline(output_error, ''' contains unexpected keys: invalid_key. Only the following keys are supported: backend, cpp_namespace, extra_headers, supported, autograd''')  # noqa: B950
 
 
 if __name__ == '__main__':

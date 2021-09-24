@@ -11,8 +11,14 @@ from torch.utils.data._typing import _DataPipeMeta
 class functional_datapipe(object):
     name: str
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, enable_df_api_tracing=False) -> None:
+        """
+            Args:
+                enable_df_api_tracing - if set, any returned DataPipe would accept
+                DataFrames API in tracing mode.
+        """
         self.name = name
+        self.enable_df_api_tracing = enable_df_api_tracing
 
     def __call__(self, cls):
         if issubclass(cls, IterDataPipe):
@@ -25,9 +31,9 @@ class functional_datapipe(object):
                     not (hasattr(cls, '__self__') and
                          isinstance(cls.__self__, non_deterministic)):
                     raise TypeError('`functional_datapipe` can only decorate IterDataPipe')
-            IterDataPipe.register_datapipe_as_function(self.name, cls)
+            IterDataPipe.register_datapipe_as_function(self.name, cls, enable_df_api_tracing=self.enable_df_api_tracing)
         elif issubclass(cls, MapDataPipe):
-            MapDataPipe.register_datapipe_as_function(self.name, cls)
+            MapDataPipe.register_datapipe_as_function(self.name, cls, enable_df_api_tracing=self.enable_df_api_tracing)
 
         return cls
 
@@ -109,7 +115,7 @@ class non_deterministic(object):
 
 
 ######################################################
-# typing
+# Type validation
 ######################################################
 # Validate each argument of DataPipe with hint as a subtype of the hint.
 def argument_validation(f):
@@ -173,8 +179,8 @@ def runtime_validation(f):
             it = f(self)
             for d in it:
                 if not self.type.issubtype_of_instance(d):
-                    raise RuntimeError("Expected an instance of subtype {}, but found {}"
-                                       .format(self.type, d))
+                    raise RuntimeError("Expected an instance as subtype of {}, but found {}({})"
+                                       .format(self.type, d, type(d)))
                 yield d
 
     return wrapper

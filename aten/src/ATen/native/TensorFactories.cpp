@@ -2,6 +2,8 @@
 #include <ATen/CPUGeneratorImpl.h>
 #include <ATen/Utils.h>
 #include <ATen/Dispatch.h>
+#include <ATen/Parallel.h>
+#include <ATen/MapAllocator.h>
 #include <ATen/NativeFunctions.h>
 #include <ATen/TracerMode.h>
 #include <c10/core/ScalarType.h>
@@ -10,7 +12,6 @@
 #include <ATen/native/Resize.h>
 #include <ATen/native/TensorFactories.h>
 #include <c10/core/TensorOptions.h>
-#include <TH/THAllocator.h>
 #include <ATen/detail/CUDAHooksInterface.h>
 #include <c10/util/Exception.h>
 #include <ATen/NamedTensorUtils.h>
@@ -48,9 +49,7 @@ void window_function_checks(
 
 } // namespace
 
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 DEFINE_DISPATCH(complex_stub);
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 DEFINE_DISPATCH(polar_stub);
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ arange ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -349,6 +348,9 @@ Tensor empty_like(
     namedinference::propagate_names(result, self.names());
   }
 
+  // never propagate Conjugate and Negative dispatch key
+  result._set_conj(false);
+  result._set_neg(false);
   return result;
 }
 
@@ -505,35 +507,30 @@ Tensor new_full(
     c10::optional<Device> device,
     c10::optional<bool> pin_memory
     ) {
-  // See [Note: hacky wrapper removal for TensorOptions]
-  TensorOptions options = TensorOptions().dtype(dtype).layout(layout).device(device).pinned_memory(pin_memory);
 
-  return at::full(size, fill_value, self.options().merge_in(options));
+  Tensor r = self.new_empty(size, TensorOptions().dtype(dtype).layout(layout).device(device).pinned_memory(pin_memory));
+  r.fill_(fill_value);
+  return r;
 }
 
 namespace {
 TensorOptions linspace_logspace_infer_options(
     const Scalar& start,
     const Scalar& end,
-    const TensorOptions& options) {
-  auto result_options = options;
+    const TensorOptions& options,
+    const char* fn_name) {
   if (start.isComplex() || end.isComplex()) {
-    // Since result_options.has_dtype() returns true (dtype is default type),
-    // even if the user hasn't specified the dtype.
-    // We just check to see if either `start` or `end` is complex,
-    // and if the `result_dtype` is not complex (be it default float type or
-    // user provided), we cast it to default complex dtype with a Warning!.
-    auto result_dtype = c10::typeMetaToScalarType(options.dtype());
-    if (!at::isComplexType(result_dtype)) {
-      TORCH_WARN(
-          "As either `start` or `stop` is complex, return type will be the complex dtype corresponding to default dtype.",
-          "In future, this may throw an error when a non-complex dtype arg is passed as input along ",
-          "with complex valued start or end value.");
-      result_options = result_options.dtype(c10::get_default_complex_dtype());
+    const auto default_complex_dtype = c10::get_default_complex_dtype();
+    if (options.has_dtype()) {
+      auto dtype = c10::typeMetaToScalarType(options.dtype());
+      TORCH_CHECK(at::isComplexType(dtype),
+          fn_name, ": inferred dtype ", default_complex_dtype, " can't be safely cast to passed dtype ", dtype);
+    } else {
+      return options.dtype(default_complex_dtype);
     }
   }
 
-  return result_options;
+  return options.has_dtype() ? options : options.dtype(c10::get_default_dtype());
 }
 } // anonymous namespace
 
@@ -552,7 +549,7 @@ Tensor linspace(
 
   const auto steps_ = steps.value_or(100);
   TORCH_CHECK(steps_ >= 0, "number of steps must be non-negative");
-  auto result_options = linspace_logspace_infer_options(start, end, options);
+  auto result_options = linspace_logspace_infer_options(start, end, options, "torch.linspace()");
   Tensor result = at::empty({steps_}, result_options);
   return at::linspace_out(result, start, end, steps);
 }
@@ -573,7 +570,7 @@ Tensor logspace(
 
   const auto steps_ = steps.value_or(100);
   TORCH_CHECK(steps_ >= 0, "number of steps must be non-negative");
-  auto result_options = linspace_logspace_infer_options(start, end, options);
+  auto result_options = linspace_logspace_infer_options(start, end, options, "torch.logspace()");
   Tensor result = at::empty({steps_}, result_options);
   return at::logspace_out(result, start, end, steps, base);
 }
@@ -611,11 +608,9 @@ Tensor new_ones(
     c10::optional<Device> device,
     c10::optional<bool> pin_memory) {
   // See [Note: hacky wrapper removal for TensorOptions]
-  TensorOptions options =
-      TensorOptions().dtype(dtype).layout(layout).device(device).pinned_memory(
-          pin_memory);
-
-  return at::ones(size, self.options().merge_in(options));
+  Tensor r = self.new_empty(size, TensorOptions().dtype(dtype).layout(layout).device(device).pinned_memory(pin_memory));
+  r.fill_(1.);
+  return r;
 }
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ scalar_tensor ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -982,7 +977,7 @@ Tensor tril_indices_cpu(
   //
   // 3. sequential RAM + transpose: create an n X 2 Tensor, fill the Tensor
   //    sequentially, and then transpose it.
-  AT_DISPATCH_ALL_TYPES(result.scalar_type(), "tril_indices", [&]() -> void {
+  AT_DISPATCH_ALL_TYPES_AND(kBFloat16, result.scalar_type(), "tril_indices", [&]() -> void {
     // fill the Tensor with correct values
     scalar_t* result_data = result.data_ptr<scalar_t>();
     int64_t i = 0;
@@ -1020,7 +1015,7 @@ Tensor triu_indices_cpu(
   // create an empty Tensor with correct size
   auto result = at::native::empty_cpu({2, triu_size}, dtype_opt, layout_opt, device_opt, pin_memory_opt);
 
-  AT_DISPATCH_ALL_TYPES(result.scalar_type(), "triu_indices", [&]() -> void {
+  AT_DISPATCH_ALL_TYPES_AND(kBFloat16, result.scalar_type(), "triu_indices", [&]() -> void {
     // fill the Tensor with correct values
     scalar_t* result_data = result.data_ptr<scalar_t>();
     int64_t i = 0;
@@ -1102,10 +1097,9 @@ Tensor new_zeros(
     c10::optional<Device> device,
     c10::optional<bool> pin_memory
     ) {
-  // See [Note: hacky wrapper removal for TensorOptions]
-  TensorOptions options = TensorOptions().dtype(dtype).layout(layout).device(device).pinned_memory(pin_memory);
-
-  return at::zeros(size, self.options().merge_in(options));
+  Tensor r = self.new_empty(size, TensorOptions().dtype(dtype).layout(layout).device(device).pinned_memory(pin_memory));
+  r.zero_();
+  return r;
 }
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~ bartlett_window ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1393,13 +1387,13 @@ Tensor from_file(c10::string_view filename, c10::optional<bool> shared, c10::opt
 
     TORCH_CHECK(!options.pinned_memory(), "tensors constructed from a file cannot be pinned");
     int64_t my_size = size.value_or(0);
-    int flags = shared.value_or(false) ? TH_ALLOCATOR_MAPPED_SHARED : 0;
+    int flags = shared.value_or(false) ? ALLOCATOR_MAPPED_SHARED : 0;
     auto my_dtype = options.dtype();
     size_t size_bytes = my_size * my_dtype.itemsize();
     auto storage_impl = c10::make_intrusive<at::StorageImpl>(
         c10::StorageImpl::use_byte_size_t(),
         size_bytes,
-        THMapAllocator::makeDataPtr(
+        MapAllocator::makeDataPtr(
             std::string(filename), flags, size_bytes, nullptr),
         /*allocator=*/nullptr,
         /*resizable=*/false);
@@ -1414,17 +1408,18 @@ Tensor from_file(c10::string_view filename, c10::optional<bool> shared, c10::opt
 Tensor clone(const Tensor& src, c10::optional<c10::MemoryFormat> optional_memory_format) {
   auto memory_format =
       optional_memory_format.value_or(MemoryFormat::Preserve);
+  Tensor self;
   if (memory_format == MemoryFormat::Preserve) {
     if (src.is_non_overlapping_and_dense()) {
-      // Copy all strides
-      auto self = at::empty_strided(src.sizes(), src.strides(), src.options());
-      self.copy_(src);
-      return self;
+      // Copy all strides, this is marginally faster than calling empty_like
+      self = at::empty_strided(src.sizes(), src.strides(), src.options());
     } else {
-      memory_format = src.suggest_memory_format();
+      self = at::empty_like(src);
     }
+  } else {
+    self = at::empty_like(src, src.options(), memory_format);
   }
-  auto self = at::empty_like(src, src.options(), memory_format);
+
   self.copy_(src);
   return self;
 }
@@ -1461,8 +1456,6 @@ Tensor ones(
     c10::optional<Device> device,
     c10::optional<bool> pin_memory) {
   // See [Note: hacky wrapper removal for TensorOptions]
-  // NOLINTNEXTLINE(clang-diagnostic-unused-variable)
-  TensorOptions options = TensorOptions().dtype(dtype).layout(layout).device(device).pinned_memory(pin_memory);
 
   return native::full(
       size, /*fill_value=*/1., names, dtype, layout, device, pin_memory);
@@ -1529,7 +1522,6 @@ Tensor rand(
 }
 
 
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 DEFINE_DISPATCH(kaiser_window_stub);
 
 } // namespace native
