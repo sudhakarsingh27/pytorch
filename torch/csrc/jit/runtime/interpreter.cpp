@@ -297,13 +297,13 @@ struct InterpreterStateImpl : c10::intrusive_ptr_target {
           }
           case INST(OP): {
             INST_GUARD;
-            frame.function->operator_table_[inst.X](&stack);
+            frame.function->operator_table_[inst.X](stack);
           }
             INST_NEXT;
           case INST(OPN): {
             INST_GUARD;
             stack.push_back(inst.N);
-            frame.function->operator_table_[inst.X](&stack);
+            frame.function->operator_table_[inst.X](stack);
           }
             INST_NEXT;
           case INST(LOAD): {
@@ -641,8 +641,8 @@ struct InterpreterStateImpl : c10::intrusive_ptr_target {
           case INST(ISINSTANCE): {
             INST_GUARD;
             at::ArrayRef<TypePtr> types(
-                &(frame.function->type_table_[inst.X]),
-                &(frame.function->type_table_[inst.X + inst.N]));
+                &frame.function->type_table_[inst.X],
+                &frame.function->type_table_[inst.X] + inst.N);
             isinstance(stack, types);
           }
             INST_NEXT;
@@ -924,10 +924,13 @@ struct InterpreterStateImpl : c10::intrusive_ptr_target {
   }
 
   void run(Stack& stack) {
+    // By the time the continuation completes the frame will be gone, so this
+    // must be done before calling runImpl().
+    TORCH_INTERNAL_ASSERT(!frames.empty());
+    const auto num_outputs = frames.front().function->n_outputs;
     if (runImpl(stack)) {
       future_->wait();
 
-      auto num_outputs = frames.front().function->n_outputs;
       if (num_outputs == 1) {
         push(stack, future_->value());
       } else {
@@ -978,11 +981,13 @@ MobileCode::MobileCode(
     const std::shared_ptr<Graph>& graph,
     std::string function_name,
     bool emit_default_input_instructions,
+    bool support_default_args_before_out,
     size_t remaining_bailout_depth)
     : Code(new interpreter::MobileCodeImpl(
           graph,
           std::move(function_name),
           emit_default_input_instructions,
+          support_default_args_before_out,
           remaining_bailout_depth)) {}
 
 MobileCode::~MobileCode() = default;
