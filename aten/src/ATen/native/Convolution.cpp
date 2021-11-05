@@ -437,8 +437,7 @@ bool check_cudnn_depthwise_workload(const at::Tensor& input, int stride) {
 // simplified version for cudnn 8.2 and above
 bool check_cudnn_depthwise_workload_with_filter(const at::Tensor& input, int stride, const at::Tensor& weight) {
   // 1D conv
-  if(input.size(2) == 1){
-    // add 1d heuristic here
+  if(input.size(2) == 1 && stride == 1){
     return true;
   }
 
@@ -485,7 +484,7 @@ auto ConvParams::use_cudnn_depthwise(
                            is_depthwise(input, weight) &&
                            input.ndimension() == 4 &&   // TODO: 5-D contiguous depthwise is not supported yet, need benchmarks
                            !is_dilated() && // no dilation supported
-                           (stride[0] == stride[1] || stride[0] == 0) && // square or 1d
+                           (stride[0] == stride[1] || input.size(2) == 1) && // square or 1d
                            input.size(1) >= 32); // min 32 channels supported)
       if (kernel_cond) {
         return check_cudnn_depthwise_workload_with_filter(input, stride[1], weight);
